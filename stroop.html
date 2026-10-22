@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>斯特鲁普效应（Stroop Effect）实验</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            color: #fff;
+            font-family: 'Microsoft YaHei', sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            user-select: none;
+            /* 防止手机端长按选中或弹出菜单 */
+            -webkit-touch-callout: none; 
+            -webkit-user-select: none;
+        }
+
+        #container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 屏幕中央的刺激词 */
+        #stimulus {
+            /* 使用 vw 适配手机和电脑屏幕大小 */
+            font-size: 20vw; 
+            max-font-size: 200px;
+            font-weight: bold;
+            display: none;
+            pointer-events: none; 
+        }
+
+        /* 界面文本（指导语、倒计时、结果等） */
+        #message {
+            font-size: 6vw;
+            max-font-size: 24px;
+            text-align: center;
+            line-height: 1.6;
+            padding: 0 20px;
+            max-width: 800px;
+        }
+
+        /* 注视点 */
+        #fixation {
+            font-size: 12vw;
+            color: #ccc;
+            display: none;
+        }
+
+        /* 屏幕下方的虚拟按键容器 */
+        #mobile-controls {
+            display: none; /* 默认隐藏，按需显示 */
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-sizing: border-box;
+        }
+
+        /* 虚拟按键的样式 */
+        .mobile-btn {
+            width: 35vw; /* 根据屏幕宽度调整按钮大小 */
+            max-width: 150px;
+            height: 35vw;
+            max-height: 150px;
+            border-radius: 50%;
+            color: white;
+            font-size: 8vw;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            transition: transform 0.1s;
+            border: 4px solid rgba(255, 255, 255, 0.8);
+        }
+
+        .mobile-btn:active {
+            transform: scale(0.95); /* 点击时产生缩放反馈 */
+            opacity: 0.8;
+        }
+
+        /* 红色按钮样式 */
+        .btn-red {
+            background-color: #d32f2f;
+        }
+
+        /* 绿色按钮样式 */
+        .btn-green {
+            background-color: #388e3c;
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <!-- 初始指导语界面 -->
+    <div id="message">
+        <h2>斯特鲁普效应 (Stroop Effect) 实验</h2>
+        <p>欢迎参加实验。屏幕中央将出现汉字，请尽量快且准确地判断**汉字显示的颜色**。</p>
+        <p>红色字体：按<b>左侧红键(←)</b><br>绿色字体：按<b>右侧绿键(→)</b></p>
+        <p>请注意：忽略汉字本身的含义，只看颜色！</p>
+        <p style="color: #4CAF50; font-weight: bold; margin-top: 30px;">请按【空格键】或【点击屏幕】开始实验</p>
+    </div>
+
+    <div id="fixation">+</div>
+    <div id="stimulus"></div>
+
+    <!-- 底部控制按钮 (电脑和手机都会显示) -->
+    <div id="mobile-controls">
+        <div class="mobile-btn btn-red" id="btn-left">←</div>
+        <div class="mobile-btn btn-green" id="btn-right">→</div>
+    </div>
+</div>
+
+<script>
+    // 实验参数设置
+    const TRIALS_PER_CONDITION = 20; // 每种条件20个试次
+    const PRACTICE_TRIALS = 6;       // 练习试次
+    
+    // 状态变量
+    let trials = [];
+    let currentTrialIndex = 0;
+    let isPractice = true;
+    let isRunning = false;
+    let canRespond = false;
+    let waitingForSpace = false;
+    
+    // 时间记录
+    let stimulusOnsetTime = 0;
+    
+    // 数据收集
+    let results = { congruent: { rt: [], correct: 0, total: 0 }, incongruent: { rt: [], correct: 0, total: 0 } };
+    let practiceResults = { congruent: { rt: [], correct: 0, total: 0 }, incongruent: { rt: [], correct: 0, total: 0 } };
+
+    // DOM 元素
+    const messageDiv = document.getElementById('message');
+    const stimulusDiv = document.getElementById('stimulus');
+    const fixationDiv = document.getElementById('fixation');
+    const mobileControls = document.getElementById('mobile-controls');
+
+    // 字体颜色定义
+    const COLOR_RED = '#FF0000';
+    const COLOR_GREEN = '#00FF00';
+
+    // 初始化实验：生成随机试次序列
+    function generateTrials() {
+        trials = [];
+        let practice = [];
+        for (let i = 0; i < 3; i++) {
+            practice.push({ word: '红', color: '红', type: 'congruent' });
+            practice.push({ word: '绿', color: '绿', type: 'congruent' });
+            practice.push({ word: '红', color: '绿', type: 'incongruent' });
+            practice.push({ word: '绿', color: '红', type: 'incongruent' });
+        }
+        practice.sort(() => Math.random() - 0.5);
+        trials = practice.slice(0, PRACTICE_TRIALS);
+
+        let formal = [];
+        for (let i = 0; i < TRIALS_PER_CONDITION; i++) {
+            formal.push({ word: '红', color: '红', type: 'congruent' });
+            formal.push({ word: '绿', color: '绿', type: 'congruent' });
+            formal.push({ word: '红', color: '绿', type: 'incongruent' });
+            formal.push({ word: '绿', color: '红', type: 'incongruent' });
+        }
+        formal.sort(() => Math.random() - 0.5);
+        
+        trials = trials.concat(formal);
+    }
+
+    // 开始实验指令
+    function startExperiment() {
+        if (!waitingForSpace) return;
+        waitingForSpace = false;
+        
+        generateTrials();
+        isPractice = true;
+        currentTrialIndex = 0;
+        
+        messageDiv.style.display = 'none';
+        fixationDiv.style.display = 'none';
+        
+        // 显示底部按钮（手机体验的核心）
+        mobileControls.style.display = 'flex'; 
+        
+        practiceResults = { congruent: { rt: [], correct: 0, total: 0 }, incongruent: { rt: [], correct: 0, total: 0 } };
+        results = { congruent: { rt: [], correct: 0, total: 0 }, incongruent: { rt: [], correct: 0, total: 0 } };
+        
+        startTrial();
+    }
+
+    // 开始一个试次
+    function startTrial() {
+        if (isPractice && currentTrialIndex >= PRACTICE_TRIALS) {
+            showPracticeResults();
+            return;
+        }
+        if (!isPractice && currentTrialIndex >= trials.length) {
+            showFinalResults();
+            return;
+        }
+
+        const trial = trials[currentTrialIndex];
+        canRespond = false;
+        
+        stimulusDiv.style.display = 'none';
+        messageDiv.style.display = 'none';
+        fixationDiv.style.display = 'block';
+        
+        setTimeout(() => {
+            fixationDiv.style.display = 'none';
+            stimulusDiv.textContent = trial.word;
+            stimulusDiv.style.color = trial.color === '红' ? COLOR_RED : COLOR_GREEN;
+            stimulusDiv.style.display = 'block';
+            
+            stimulusOnsetTime = performance.now();
+            canRespond = true; 
+        }, 500);
+    }
+
+    // 处理按键响应 (统一处理键盘和触摸)
+    function handleResponse(responseKey) {
+        if (!canRespond || !isRunning) return;
+        
+        canRespond = false; 
+        const rt = Math.round(performance.now() - stimulusOnsetTime);
+        const trial = trials[currentTrialIndex];
+        
+        // 判断正误 (左=红，右=绿)
+        let isCorrect = false;
+        if (responseKey === 'left' && trial.color === '红') isCorrect = true;
+        if (responseKey === 'right' && trial.color === '绿') isCorrect = true;
+
+        // 记录数据
+        const targetData = isPractice ? practiceResults : results;
+        const condition = trial.type;
+        targetData[condition].total++;
+        if (isCorrect) {
+            targetData[condition].correct++;
+            targetData[condition].rt.push(rt);
+        }
+
+        stimulusDiv.style.display = 'none';
+        
+        currentTrialIndex++;
+        setTimeout(() => {
+            startTrial();
+        }, 400); 
+    }
+
+    // 显示练习阶段结果
+    function showPracticeResults() {
+        canRespond = false;
+        isPractice = false;
+        stimulusDiv.style.display = 'none';
+        mobileControls.style.display = 'none'; // 隐藏按钮防止误触
+        
+        let conRT = practiceResults.congruent.rt.length > 0 ? Math.round(practiceResults.congruent.rt.reduce((a, b) => a + b, 0) / practiceResults.congruent.rt.length) : 0;
+        let incRT = practiceResults.incongruent.rt.length > 0 ? Math.round(practiceResults.incongruent.rt.reduce((a, b) => a + b, 0) / practiceResults.incongruent.rt.length) : 0;
+
+        messageDiv.innerHTML = `
+            <h2>练习阶段结束</h2>
+            <p>你练习阶段的反应时：</p>
+            <p>一致条件: <b>${conRT} ms</b> &nbsp;|&nbsp; 不一致条件: <b>${incRT} ms</b></p>
+            <p style="color: #4CAF50; font-weight: bold; margin-top: 30px;">按【空格键】或【点击屏幕】开始正式实验</p>
+        `;
+        messageDiv.style.display = 'block';
+        
+        waitingForSpace = true;
+        currentTrialIndex = 0; 
+    }
+
+    // 结束实验并显示最终结果
+    function showFinalResults() {
+        canRespond = false;
+        isRunning = false;
+        stimulusDiv.style.display = 'none';
+        mobileControls.style.display = 'none';
+
+        let conRT = results.congruent.rt.length > 0 ? Math.round(results.congruent.rt.reduce((a, b) => a + b, 0) / results.congruent.rt.length) : 0;
+        let incRT = results.incongruent.rt.length > 0 ? Math.round(results.incongruent.rt.reduce((a, b) => a + b, 0) / results.incongruent.rt.length) : 0;
+        let conAcc = results.congruent.total > 0 ? Math.round((results.congruent.correct / results.congruent.total) * 100) : 0;
+        let incAcc = results.incongruent.total > 0 ? Math.round((results.incongruent.correct / results.incongruent.total) * 100) : 0;
+        let stroopEffect = incRT - conRT;
+
+        messageDiv.innerHTML = `
+            <h2>实验结束，感谢参与！</h2>
+            <div style="text-align: left; display: inline-block; font-size: 16px; background: rgba(255,255,255,0.1); padding: 20px; border-radius: 10px;">
+                <p><b>【一致条件】</b> 平均反应时：${conRT} ms (正确率: ${conAcc}%)</p>
+                <p><b>【不一致条件】</b> 平均反应时：${incRT} ms (正确率: ${incAcc}%)</p>
+                <br>
+                <p style="color: #FF9800; font-weight: bold;">Stroop效应量：${stroopEffect} ms</p>
+            </div>
+        `;
+        messageDiv.style.display = 'block';
+    }
+
+    // --- 事件监听区 ---
+
+    // 1. 键盘事件 (针对电脑)
+    document.addEventListener('keydown', (e) => {
+        if (['Space', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+            e.preventDefault(); // 防止页面滚动
+        }
+        
+        if (e.code === 'Space' && waitingForSpace) {
+            startExperiment();
+            return;
+        }
+        if (e.code === 'ArrowLeft') handleResponse('left');
+        if (e.code === 'ArrowRight') handleResponse('right');
+    });
+
+    // 2. 底部按钮触摸/点击事件 (兼容手机和电脑鼠标)
+    const btnLeft = document.getElementById('btn-left');
+    const btnRight = document.getElementById('btn-right');
+
+    // 使用 pointerdown 事件可以完美统一鼠标按下和手机触摸按下
+    btnLeft.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); // 阻止默认的触摸行为
+        handleResponse('left');
+    });
+
+    btnRight.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        handleResponse('right');
+    });
+
+    // 3. 屏幕点击事件 (用于指导语界面按屏幕开始)
+    document.addEventListener('pointerdown', (e) => {
+        // 如果点击的是底部按钮，不触发开始逻辑
+        if (e.target.classList.contains('mobile-btn')) return;
+        
+        if (waitingForSpace) {
+            startExperiment();
+        }
+    });
+
+    // 初始化运行状态
+    isRunning = true;
+    waitingForSpace = true;
+
+</script>
+
+</body>
+</html>
